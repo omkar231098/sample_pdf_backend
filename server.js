@@ -3,99 +3,95 @@ const mongoose = require('mongoose');
 const multer = require('multer');
 const PDFDocument = require('pdfkit');
 const cors = require('cors');
-const bcrypt = require('bcrypt');
-const jwt = require('jsonwebtoken');
-const session = require('express-session');
-
+const bodyParser = require('body-parser');
 const app = express();
-const port = process.env.PORT || 3001;
 
+app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+const port = process.env.PORT || 3001;
 app.use(cors());
-app.use(express.json());
 
 // MongoDB connection
-mongoose.connect('mongodb+srv://omkardhanave:omkar@cluster0.liqetg2.mongodb.net/SamplePDF?retryWrites=true&w=majority', {
+mongoose.connect('mongodb+srv://omkardhanave:omkar@cluster0.liqetg2.mongodb.net/MyPdfData?retryWrites=true&w=majority', {
   useNewUrlParser: true,
   useUnifiedTopology: true,
 });
 
-// Create mongoose model for storing user data
+// Create mongoose models for storing data
 const User = mongoose.model('User', {
   username: String,
   password: String,
+  pdfs: [{ type: mongoose.Schema.Types.ObjectId, ref: 'Pdf' }],
 });
+
+const Pdf = mongoose.model('Pdf', {
+  name: String,
+  age: Number,
+  address: String,
+  photo: String,
+  user: { type: mongoose.Schema.Types.ObjectId, ref: 'User' },
+});
+
 
 // Multer setup for handling file uploads
 const storage = multer.memoryStorage();
 const upload = multer({ storage: storage });
 
-// Express session setup
-app.use(session({
-  secret: 'your-secret-key',
-  resave: false,
-  saveUninitialized: false,
-}));
 
-// Middleware to check user authentication
-const authenticateUser = (req, res, next) => {
-  if (req.session && req.session.user) {
-    next();
-  } else {
-    res.status(401).send('Unauthorized');
-  }
-};
 
-// User registration endpoint
-app.post('/api/register', async (req, res) => {
-  const { username, password } = req.body;
-
-  // Hash the password before saving it to the database
-  const hashedPassword = await bcrypt.hash(password, 10);
-
-  const user = new User({ username, password: hashedPassword });
-  await user.save();
-
-  res.status(201).send('User registered successfully');
-});
-
-// User login endpoint
 app.post('/api/login', async (req, res) => {
-  const { username, password } = req.body;
+  try {
+    const { username, password } = req.body;
 
-  const user = await User.findOne({ username });
+    // Check if the user exists
+    const user = await User.findOne({ username, password });
 
-  if (user && await bcrypt.compare(password, user.password)) {
-    // Create a token and store it in a cookie
-    const token = jwt.sign({ username: user.username }, 'your-secret-key');
-    req.session.user = user;
-    res.cookie('token', token, { httpOnly: true });
-
-    res.status(200).send('Login successful');
-  } else {
-    res.status(401).send('Invalid credentials');
+    if (user) {
+      // Set the session cookie for authentication
+   
+      res.status(200).send('Login successful');
+    } else {
+      res.status(401).send('Invalid credentials');
+    }
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Internal Server Error');
   }
 });
 
-// Logout endpoint
+// API endpoint for user logout
 app.post('/api/logout', (req, res) => {
+  // Destroy the session and clear the cookie
   req.session.destroy();
-  res.clearCookie('token');
   res.status(200).send('Logout successful');
 });
 
-// API endpoint for saving user data
-// API endpoint for saving user data
-app.post('/api/users',authenticateUser, upload.single('photo'), async (req, res) => {
+// API endpoint for registering users
+app.post('/api/register', async (req, res) => {
   try {
-    const { name } = req.body;
+    const { username, password } = req.body;
 
-    // Save data to MongoDB
-    const user = new User({ name, photo: req.file.buffer.toString('base64') });
+    // Save user data to MongoDB
+    const user = new User({ username, password });
     await user.save();
+
+    res.status(201).send('User registered successfully!');
+  } catch (error) {
+    console.error(error);
+    res.status(500).send('Internal Server Error');
+  }
+});
+
+// API endpoint for saving user details and generating PDF
+app.post('/api/users', upload.single('photo'), async (req, res) => {
+  try {
+    const { name, age, address } = req.body;
 
     // Generate PDF
     const pdfDoc = new PDFDocument();
     pdfDoc.text(`Name: ${name}`);
+    pdfDoc.text(`Age: ${age}`);
+    pdfDoc.text(`Address: ${address}`);
     pdfDoc.image(Buffer.from(req.file.buffer), { width: 100, height: 100 });
     pdfDoc.end();
 
@@ -106,16 +102,27 @@ app.post('/api/users',authenticateUser, upload.single('photo'), async (req, res)
       pdfDoc.on('end', () => resolve(Buffer.concat(chunks)));
     });
 
-    // Send the PDF buffer as response
-    res.setHeader('Content-Type', 'application/octet-stream');
-    res.send(pdfBuffer);
+    // Find the user by the provided username
+    // const user = await User.findOne({ username: req.cookies.username });
 
+   
+      // Save PDF data to MongoDB
+      const pdf = new Pdf({ name, age, address, photo: pdfBuffer.toString('base64') });
+      await pdf.save();
+
+      // Update the user's pdfs array with the new PDF
+     
+      
+
+      // Send the PDF buffer as response
+      res.setHeader('Content-Type', 'application/octet-stream');
+      res.send(pdfBuffer);
+   
   } catch (error) {
     console.error(error);
     res.status(500).send('Internal Server Error');
   }
 });
-
 app.listen(port, () => {
   console.log(`Server is running on port ${port}`);
 });
